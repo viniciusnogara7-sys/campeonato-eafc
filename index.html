@@ -3,11 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EA FC 26 - Local Pro Manager</title>
+  <title>EA FC 26 - Local Pro Manager (Online)</title>
+  
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
   <style>
     body { margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
     * { box-sizing: border-box; }
@@ -31,11 +36,25 @@
 </head>
 <body>
 <div id="root"></div>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDtf8IBG9P-Ai2MBxUom2tNRg6eoDI5h5c",
+    authDomain: "campeonato-eafc.firebaseapp.com",
+    databaseURL: "https://campeonato-eafc-default-rtdb.firebaseio.com",
+    projectId: "campeonato-eafc",
+    storageBucket: "campeonato-eafc.firebasestorage.app",
+    messagingSenderId: "636657002055",
+    appId: "1:636657002055:web:1bf2729ad7895cdf29f362"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+</script>
+
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
 
 const COLOR_PALETTE = ["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#f97316","#84cc16","#06b6d4","#a855f7","#f43f5e","#22c55e","#eab308","#64748b"];
-const STORAGE_KEY = "eafc_local_pro_v1";
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function shuffle(arr) {
@@ -47,7 +66,6 @@ function shuffle(arr) {
   return a;
 }
 
-// Lógica de Sorteio com Descanso e Múltiplos Consoles
 function generateSmartMatches(players, numConsoles) {
   let allMatches = [];
   for (let i = 0; i < players.length; i++) {
@@ -62,67 +80,61 @@ function generateSmartMatches(players, numConsoles) {
 
   while (allMatches.length > 0) {
     let foundMatchIdx = -1;
-    
     for (let i = 0; i < allMatches.length; i++) {
       const [p1, p2] = allMatches[i];
       const p1Count = lastPlayers.filter(p => p === p1).length;
       const p2Count = lastPlayers.filter(p => p === p2).length;
-      
-      if (p1Count < 2 && p2Count < 2) {
-        foundMatchIdx = i;
-        break;
-      }
+      if (p1Count < 2 && p2Count < 2) { foundMatchIdx = i; break; }
     }
-
     if (foundMatchIdx === -1) foundMatchIdx = 0;
-
     const match = allMatches.splice(foundMatchIdx, 1)[0];
     orderedMatches.push(match);
-    
     lastPlayers.push(match[0], match[1]);
-    // Ajusta o histórico com base no número de consoles (cada console tem 2 jogadores)
-    if (lastPlayers.length > (numConsoles * 2 * 2)) {
-      lastPlayers.splice(0, 2);
-    }
+    if (lastPlayers.length > (numConsoles * 2 * 2)) lastPlayers.splice(0, 2);
   }
-  
   return orderedMatches;
 }
 
 // ── Componentes ───────────────────────────────────────────────────────────────
 function PlayerBadge({ name, color, small }) {
   const c = color || "#64748b";
-  return (
-    <span style={{ background: c+"22", border:`1.5px solid ${c}`, color:c, borderRadius:6, padding: small?"2px 5px":"3px 10px", fontWeight:700, fontSize: small?10:13, whiteSpace:"nowrap", display:"inline-block" }}>
-      {name}
-    </span>
-  );
+  return <span style={{ background: c+"22", border:`1.5px solid ${c}`, color:c, borderRadius:6, padding: small?"2px 5px":"3px 10px", fontWeight:700, fontSize: small?10:13, whiteSpace:"nowrap", display:"inline-block" }}>{name}</span>;
 }
 
 function Btn({ children, onClick, color="#3b82f6", outline, small, disabled, danger, style }) {
   const bg = danger ? "#ef4444" : outline ? "transparent" : color;
   const border = danger ? "#ef4444" : outline ? color : color;
   const textColor = outline ? color : "#fff";
-  return (
-    <button onClick={onClick} disabled={disabled} style={{ background: disabled ? "#1e293b" : bg, border:`1.5px solid ${disabled?"#334155":border}`, color: disabled?"#475569":textColor, borderRadius:8, padding: small?"6px 10px":"9px 18px", fontWeight:700, fontSize: small?11:14, cursor: disabled?"default":"pointer", whiteSpace:"nowrap", transition: "all 0.2s", ...style }}>{children}</button>
-  );
+  return <button onClick={onClick} disabled={disabled} style={{ background: disabled ? "#1e293b" : bg, border:`1.5px solid ${disabled?"#334155":border}`, color: disabled?"#475569":textColor, borderRadius:8, padding: small?"6px 10px":"9px 18px", fontWeight:700, fontSize: small?11:14, cursor: disabled?"default":"pointer", whiteSpace:"nowrap", transition: "all 0.2s", ...style }}>{children}</button>;
 }
 
 // ── Tela: Home ────────────────────────────────────────────────────────────────
 function HomeScreen({ onNew, onLoad }) {
-  const [saved, setSaved] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEY)) || []);
+  const [saved, setSaved] = useState([]);
+
+  useEffect(() => {
+    const ref = db.ref('tournaments');
+    ref.on('value', snapshot => {
+      const data = snapshot.val();
+      if (data) {
+        setSaved(Object.values(data).sort((a, b) => b.createdAt - a.createdAt));
+      } else {
+        setSaved([]);
+      }
+    });
+    return () => ref.off();
+  }, []);
+
   const handleDelete = (id) => {
-    if(!confirm("Excluir este campeonato?")) return;
-    const updated = saved.filter(t => t.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setSaved(updated);
+    if(!confirm("Excluir este campeonato de todos os dispositivos?")) return;
+    db.ref('tournaments/' + id).remove();
   };
 
   return (
     <div style={{ maxWidth: 600, margin: "0 auto", padding: "40px 16px" }}>
       <div style={{ textAlign: "center", marginBottom: 32 }}>
         <div style={{ fontSize: 60 }}>🎮</div>
-        <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900 }}>EA FC 26 LOCAL</h1>
+        <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900 }}>EA FC 26 ONLINE</h1>
         <p style={{ color: "#64748b" }}>Gestão Multi-Consoles Profissional</p>
       </div>
       <Btn onClick={onNew} color="linear-gradient(135deg,#3b82f6,#8b5cf6)" style={{ width: "100%", marginBottom: 32, padding: 18 }}>＋ Criar Novo Torneio</Btn>
@@ -130,7 +142,7 @@ function HomeScreen({ onNew, onLoad }) {
         <div key={t.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontWeight: 800 }}>{t.name}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{t.type === 'copa' ? 'Copa' : 'Liga'} · {t.players.length} Jogadores</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>{t.type === 'copa' ? 'Copa' : 'Liga'} · {t.players?.length || 0} Jogadores</div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <Btn small onClick={() => onLoad(t)}>Abrir</Btn>
@@ -185,12 +197,17 @@ function SetupScreen({ onStart, onBack }) {
       ligaMatches = generateSmartMatches(uniquePlayers, numConsoles);
     }
 
-    onStart({
+    const newTournament = {
       id: Date.now().toString(),
       name, type, players: uniquePlayers, colors, groups, ligaMatches,
       numClassificados, numConsoles,
       results: {}, bracket: null, champion: null,
       createdAt: Date.now()
+    };
+
+    // Grava no Firebase e Inicia
+    db.ref('tournaments/' + newTournament.id).set(newTournament).then(() => {
+      onStart(newTournament);
     });
   };
 
@@ -237,7 +254,7 @@ function SetupScreen({ onStart, onBack }) {
           ))}
         </div>
       </div>
-      <Btn onClick={handleStart} color="#10b981" style={{ width: "100%" }}>Iniciar Torneio Local 🎮</Btn>
+      <Btn onClick={handleStart} color="#10b981" style={{ width: "100%" }}>Iniciar Torneio Online 🎮</Btn>
     </div>
   );
 }
@@ -248,29 +265,33 @@ function TournamentApp({ tournament, onBack }) {
   const [data, setData] = useState(tournament);
   const pdfRef = useRef();
 
+  // Escuta as alterações no Firebase em tempo real
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-    const idx = saved.findIndex(t => t.id === data.id);
-    if (idx >= 0) saved[idx] = data; else saved.unshift(data);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-  }, [data]);
+    if (!tournament?.id) return;
+    const ref = db.ref('tournaments/' + tournament.id);
+    ref.on('value', snapshot => {
+      if(snapshot.exists()) {
+        setData(snapshot.val());
+      }
+    });
+    return () => ref.off();
+  }, [tournament?.id]);
 
   const setScore = (matchKey, ga, gb) => {
-    setData(prev => ({
-      ...prev,
-      results: { ...prev.results, [matchKey]: { ga: ga === "" ? "" : Number(ga), gb: gb === "" ? "" : Number(gb) } }
-    }));
-  };
-
-  const setBracketScore = (phase, index, ga, gb) => {
-    setData(prev => {
-      const nextBracket = { ...prev.bracket };
-      nextBracket[phase][index].score = { ga: ga === "" ? "" : Number(ga), gb: gb === "" ? "" : Number(gb) };
-      return { ...prev, bracket: nextBracket };
+    db.ref(`tournaments/${data.id}/results/${matchKey}`).set({
+      ga: ga === "" ? "" : Number(ga),
+      gb: gb === "" ? "" : Number(gb)
     });
   };
 
-  const getStats = (playerList, results) => {
+  const setBracketScore = (phase, index, ga, gb) => {
+    db.ref(`tournaments/${data.id}/bracket/${phase}/${index}/score`).set({
+      ga: ga === "" ? "" : Number(ga),
+      gb: gb === "" ? "" : Number(gb)
+    });
+  };
+
+  const getStats = (playerList, results = {}) => {
     const stats = {};
     playerList.forEach(p => stats[p] = { j: 0, pts: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, sg: 0 });
     Object.entries(results).forEach(([key, score]) => {
@@ -291,14 +312,14 @@ function TournamentApp({ tournament, onBack }) {
 
   const goleadas = useMemo(() => {
     const list = [];
-    Object.entries(data.results).forEach(([key, score]) => {
+    Object.entries(data.results || {}).forEach(([key, score]) => {
       if (score.ga === "" || score.gb === "" || score.ga === undefined) return;
       const [p1, p2] = key.split("_vs_");
       const diff = Math.abs(score.ga - score.gb);
       if (diff >= 3) list.push({ p1, p2, ga: score.ga, gb: score.gb, diff });
     });
     return list.sort((a, b) => b.diff - a.diff).slice(0, 10);
-  }, [data]);
+  }, [data.results]);
 
   const initBracket = () => {
     const qualified = [];
@@ -322,15 +343,12 @@ function TournamentApp({ tournament, onBack }) {
       matches.push({ p1: finalQualified[i], p2: finalQualified[finalQualified.length - 1 - i], score: { ga: "", gb: "" } });
     }
 
-    setData(prev => ({ 
-      ...prev, 
-      bracket: { 
-        oitavas: phase === 'oitavas' ? matches : [],
-        quartas: phase === 'quartas' ? matches : [], 
-        semi: phase === 'semi' ? matches : [], 
-        final: phase === 'final' ? matches : [] 
-      } 
-    }));
+    db.ref(`tournaments/${data.id}/bracket`).set({ 
+      oitavas: phase === 'oitavas' ? matches : [],
+      quartas: phase === 'quartas' ? matches : [], 
+      semi: phase === 'semi' ? matches : [], 
+      final: phase === 'final' ? matches : [] 
+    });
     setTab("mata-mata");
   };
 
@@ -340,30 +358,30 @@ function TournamentApp({ tournament, onBack }) {
     if (match.score.ga === match.score.gb) return alert("Mata-mata não pode empatar!");
     const winner = match.score.ga > match.score.gb ? match.p1 : match.p2;
     
-    setData(prev => {
-      const nextBracket = { ...prev.bracket };
-      if (phase === 'oitavas') {
-        if (!nextBracket.quartas || nextBracket.quartas.length === 0) {
-          nextBracket.quartas = Array(4).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
-        }
-        const nextIdx = Math.floor(index / 2);
-        if (index % 2 === 0) nextBracket.quartas[nextIdx].p1 = winner; else nextBracket.quartas[nextIdx].p2 = winner;
-      } else if (phase === 'quartas') {
-        if (!nextBracket.semi || nextBracket.semi.length === 0) {
-          nextBracket.semi = Array(2).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
-        }
-        const nextIdx = Math.floor(index / 2);
-        if (index % 2 === 0) nextBracket.semi[nextIdx].p1 = winner; else nextBracket.semi[nextIdx].p2 = winner;
-      } else if (phase === 'semi') {
-        if (!nextBracket.final || nextBracket.final.length === 0) {
-          nextBracket.final = [{ p1: null, p2: null, score: { ga: "", gb: "" } }];
-        }
-        if (index === 0) nextBracket.final[0].p1 = winner; else nextBracket.final[0].p2 = winner;
-      } else {
-        prev.champion = winner;
+    const nextBracket = JSON.parse(JSON.stringify(data.bracket));
+
+    if (phase === 'oitavas') {
+      if (!nextBracket.quartas || nextBracket.quartas.length === 0) {
+        nextBracket.quartas = Array(4).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
       }
-      return { ...prev, bracket: nextBracket };
-    });
+      const nextIdx = Math.floor(index / 2);
+      if (index % 2 === 0) nextBracket.quartas[nextIdx].p1 = winner; else nextBracket.quartas[nextIdx].p2 = winner;
+    } else if (phase === 'quartas') {
+      if (!nextBracket.semi || nextBracket.semi.length === 0) {
+        nextBracket.semi = Array(2).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
+      }
+      const nextIdx = Math.floor(index / 2);
+      if (index % 2 === 0) nextBracket.semi[nextIdx].p1 = winner; else nextBracket.semi[nextIdx].p2 = winner;
+    } else if (phase === 'semi') {
+      if (!nextBracket.final || nextBracket.final.length === 0) {
+        nextBracket.final = [{ p1: null, p2: null, score: { ga: "", gb: "" } }];
+      }
+      if (index === 0) nextBracket.final[0].p1 = winner; else nextBracket.final[0].p2 = winner;
+    } else {
+      db.ref(`tournaments/${data.id}/champion`).set(winner);
+      return;
+    }
+    db.ref(`tournaments/${data.id}/bracket`).set(nextBracket);
   };
 
   const shareWhatsApp = () => {
@@ -408,11 +426,11 @@ function TournamentApp({ tournament, onBack }) {
             <div className="card" style={{ background: "#334155", border: "none" }}>
               <p style={{ margin: 0, fontSize: 12, fontWeight: 700 }}>🚀 MODO MULTI-CONSOLE ATIVO: {data.numConsoles} APARELHOS</p>
             </div>
-            {(data.type === 'copa' ? Object.keys(data.groups).sort() : ['LIGA']).map(g => (
+            {(data.type === 'copa' ? Object.keys(data.groups || {}).sort() : ['LIGA']).map(g => (
               <div key={g} className="card">
                 <h3 style={{ marginTop: 0, fontSize: 14, color: "#3b82f6" }}>{g === 'LIGA' ? 'ORDEM DAS PARTIDAS' : `GRUPO ${g}`}</h3>
                 {(g === 'LIGA' ? data.ligaMatches : data.groups[g].matches).map(([p1, p2], idx) => {
-                  const key = `${p1}_vs_${p2}`, score = data.results[key] || { ga: "", gb: "" };
+                  const key = `${p1}_vs_${p2}`, score = (data.results && data.results[key]) || { ga: "", gb: "" };
                   const consoleNum = (idx % data.numConsoles) + 1;
                   const isCurrentRound = idx < data.numConsoles;
                   return (
@@ -434,7 +452,7 @@ function TournamentApp({ tournament, onBack }) {
 
         {tab === 'tabela' && (
           <div>
-            {(data.type === 'copa' ? Object.keys(data.groups).sort() : ['LIGA']).map(g => (
+            {(data.type === 'copa' ? Object.keys(data.groups || {}).sort() : ['LIGA']).map(g => (
               <div key={g} className="card">
                 <h3 style={{ marginTop: 0, fontSize: 14, color: "#3b82f6" }}>{g === 'LIGA' ? 'CLASSIFICAÇÃO' : `GRUPO ${g}`}</h3>
                 <div style={{ overflowX: "auto" }}>
