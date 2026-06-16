@@ -3,16 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EA FC 26 - Local Pro Manager (Online)</title>
-  
+  <title>EA FC 26 - Local Pro Manager</title>
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
-
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDtf8IBG9P-Ai2MBxUom2tNRg6eoDI5h5c",
+      authDomain: "campeonato-eafc.firebaseapp.com",
+      databaseURL: "https://campeonato-eafc-default-rtdb.firebaseio.com",
+      projectId: "campeonato-eafc",
+      storageBucket: "campeonato-eafc.firebasestorage.app",
+      messagingSenderId: "636657002055",
+      appId: "1:636657002055:web:1bf2729ad7895cdf29f362"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+  </script>
   <style>
     body { margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
     * { box-sizing: border-box; }
@@ -32,29 +43,38 @@
     .pdf-table th { background: #1e293b; color: #3b82f6; padding: 15px; border: 1px solid #334155; }
     .pdf-table td { padding: 15px; border: 1px solid #334155; text-align: center; }
     .console-badge { background: #3b82f6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 900; margin-right: 8px; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
   </style>
 </head>
 <body>
 <div id="root"></div>
-
-<script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyDtf8IBG9P-Ai2MBxUom2tNRg6eoDI5h5c",
-    authDomain: "campeonato-eafc.firebaseapp.com",
-    databaseURL: "https://campeonato-eafc-default-rtdb.firebaseio.com",
-    projectId: "campeonato-eafc",
-    storageBucket: "campeonato-eafc.firebasestorage.app",
-    messagingSenderId: "636657002055",
-    appId: "1:636657002055:web:1bf2729ad7895cdf29f362"
-  };
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.database();
-</script>
-
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
 
 const COLOR_PALETTE = ["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#f97316","#84cc16","#06b6d4","#a855f7","#f43f5e","#22c55e","#eab308","#64748b"];
+const DB_KEY = "tournaments";
+
+// ── Firebase helpers ──────────────────────────────────────────────────────────
+function fbSave(tournament) {
+  db.ref(`${DB_KEY}/${tournament.id}`).set(tournament);
+}
+function fbDelete(id) {
+  db.ref(`${DB_KEY}/${id}`).remove();
+}
+function fbWatch(id, callback) {
+  const ref = db.ref(`${DB_KEY}/${id}`);
+  ref.on('value', snap => callback(snap.val()));
+  return () => ref.off();
+}
+function fbWatchAll(callback) {
+  const ref = db.ref(DB_KEY);
+  ref.on('value', snap => {
+    const val = snap.val();
+    callback(val ? Object.values(val).sort((a,b) => (b.createdAt||0)-(a.createdAt||0)) : []);
+  });
+  return () => ref.off();
+}
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
 function shuffle(arr) {
@@ -68,23 +88,19 @@ function shuffle(arr) {
 
 function generateSmartMatches(players, numConsoles) {
   let allMatches = [];
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
+  for (let i = 0; i < players.length; i++)
+    for (let j = i + 1; j < players.length; j++)
       allMatches.push([players[i], players[j]]);
-    }
-  }
-  
   allMatches = shuffle(allMatches);
   const orderedMatches = [];
-  const lastPlayers = []; 
-
+  const lastPlayers = [];
   while (allMatches.length > 0) {
     let foundMatchIdx = -1;
     for (let i = 0; i < allMatches.length; i++) {
       const [p1, p2] = allMatches[i];
-      const p1Count = lastPlayers.filter(p => p === p1).length;
-      const p2Count = lastPlayers.filter(p => p === p2).length;
-      if (p1Count < 2 && p2Count < 2) { foundMatchIdx = i; break; }
+      if (lastPlayers.filter(p=>p===p1).length < 2 && lastPlayers.filter(p=>p===p2).length < 2) {
+        foundMatchIdx = i; break;
+      }
     }
     if (foundMatchIdx === -1) foundMatchIdx = 0;
     const match = allMatches.splice(foundMatchIdx, 1)[0];
@@ -95,56 +111,80 @@ function generateSmartMatches(players, numConsoles) {
   return orderedMatches;
 }
 
-// ── Componentes ───────────────────────────────────────────────────────────────
+// ── Componentes base ──────────────────────────────────────────────────────────
 function PlayerBadge({ name, color, small }) {
   const c = color || "#64748b";
-  return <span style={{ background: c+"22", border:`1.5px solid ${c}`, color:c, borderRadius:6, padding: small?"2px 5px":"3px 10px", fontWeight:700, fontSize: small?10:13, whiteSpace:"nowrap", display:"inline-block" }}>{name}</span>;
+  return (
+    <span style={{ background:c+"22", border:`1.5px solid ${c}`, color:c, borderRadius:6,
+      padding:small?"2px 5px":"3px 10px", fontWeight:700, fontSize:small?10:13,
+      whiteSpace:"nowrap", display:"inline-block" }}>{name}</span>
+  );
 }
 
 function Btn({ children, onClick, color="#3b82f6", outline, small, disabled, danger, style }) {
-  const bg = danger ? "#ef4444" : outline ? "transparent" : color;
-  const border = danger ? "#ef4444" : outline ? color : color;
-  const textColor = outline ? color : "#fff";
-  return <button onClick={onClick} disabled={disabled} style={{ background: disabled ? "#1e293b" : bg, border:`1.5px solid ${disabled?"#334155":border}`, color: disabled?"#475569":textColor, borderRadius:8, padding: small?"6px 10px":"9px 18px", fontWeight:700, fontSize: small?11:14, cursor: disabled?"default":"pointer", whiteSpace:"nowrap", transition: "all 0.2s", ...style }}>{children}</button>;
+  const bg = danger?"#ef4444":outline?"transparent":color;
+  const border = danger?"#ef4444":outline?color:color;
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      background:disabled?"#1e293b":bg, border:`1.5px solid ${disabled?"#334155":border}`,
+      color:disabled?"#475569":outline?color:"#fff", borderRadius:8,
+      padding:small?"6px 10px":"9px 18px", fontWeight:700, fontSize:small?11:14,
+      cursor:disabled?"default":"pointer", whiteSpace:"nowrap", ...style }}>{children}</button>
+  );
+}
+
+function OnlineIndicator({ count }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#10b981" }}>
+      <span className="pulse" style={{ width:7, height:7, borderRadius:"50%", background:"#10b981", display:"inline-block" }}></span>
+      Online · {count} {count===1?"pessoa":"pessoas"} vendo
+    </div>
+  );
 }
 
 // ── Tela: Home ────────────────────────────────────────────────────────────────
 function HomeScreen({ onNew, onLoad }) {
   const [saved, setSaved] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const ref = db.ref('tournaments');
-    ref.on('value', snapshot => {
-      const data = snapshot.val();
-      if (data) {
-        setSaved(Object.values(data).sort((a, b) => b.createdAt - a.createdAt));
-      } else {
-        setSaved([]);
-      }
-    });
-    return () => ref.off();
+    const unsub = fbWatchAll(list => { setSaved(list); setLoading(false); });
+    return unsub;
   }, []);
 
   const handleDelete = (id) => {
-    if(!confirm("Excluir este campeonato de todos os dispositivos?")) return;
-    db.ref('tournaments/' + id).remove();
+    if(!confirm("Excluir este campeonato para todos?")) return;
+    fbDelete(id);
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: "0 auto", padding: "40px 16px" }}>
-      <div style={{ textAlign: "center", marginBottom: 32 }}>
-        <div style={{ fontSize: 60 }}>🎮</div>
-        <h1 style={{ margin: 0, fontSize: 32, fontWeight: 900 }}>EA FC 26 ONLINE</h1>
-        <p style={{ color: "#64748b" }}>Gestão Multi-Consoles Profissional</p>
+    <div style={{ maxWidth:600, margin:"0 auto", padding:"40px 16px" }}>
+      <div style={{ textAlign:"center", marginBottom:32 }}>
+        <div style={{ fontSize:60 }}>🎮</div>
+        <h1 style={{ margin:0, fontSize:32, fontWeight:900 }}>EA FC 26 LOCAL</h1>
+        <p style={{ color:"#64748b" }}>Gestão Multi-Consoles Profissional</p>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontSize:11, color:"#10b981", marginTop:4 }}>
+          <span className="pulse" style={{ width:7, height:7, borderRadius:"50%", background:"#10b981", display:"inline-block" }}></span>
+          Dados compartilhados em tempo real
+        </div>
       </div>
-      <Btn onClick={onNew} color="linear-gradient(135deg,#3b82f6,#8b5cf6)" style={{ width: "100%", marginBottom: 32, padding: 18 }}>＋ Criar Novo Torneio</Btn>
+      <Btn onClick={onNew} color="linear-gradient(135deg,#3b82f6,#8b5cf6)" style={{ width:"100%", marginBottom:32, padding:18 }}>
+        ＋ Criar Novo Torneio
+      </Btn>
+      {loading && <p style={{ textAlign:"center", color:"#64748b" }}>Carregando...</p>}
+      {!loading && saved.length === 0 && (
+        <p style={{ textAlign:"center", color:"#334155" }}>Nenhum torneio ainda. Crie o primeiro!</p>
+      )}
       {saved.map(t => (
-        <div key={t.id} className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div key={t.id} className="card" style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
-            <div style={{ fontWeight: 800 }}>{t.name}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{t.type === 'copa' ? 'Copa' : 'Liga'} · {t.players?.length || 0} Jogadores</div>
+            <div style={{ fontWeight:800 }}>{t.name}</div>
+            <div style={{ fontSize:11, color:"#64748b" }}>
+              {t.type==='copa'?'Copa':'Liga'} · {t.players?.length} Jogadores · {t.numConsoles} Console(s)
+            </div>
+            {t.champion && <div style={{ fontSize:11, color:"#fbbf24", marginTop:2 }}>🏆 {t.champion}</div>}
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display:"flex", gap:6 }}>
             <Btn small onClick={() => onLoad(t)}>Abrir</Btn>
             <Btn small danger outline onClick={() => handleDelete(t.id)}>🗑</Btn>
           </div>
@@ -157,104 +197,93 @@ function HomeScreen({ onNew, onLoad }) {
 // ── Tela: Setup ───────────────────────────────────────────────────────────────
 function SetupScreen({ onStart, onBack }) {
   const [name, setName] = useState("");
-  const [type, setType] = useState("copa"); 
+  const [type, setType] = useState("liga");
   const [numPlayers, setNumPlayers] = useState(8);
   const [numConsoles, setNumConsoles] = useState(1);
   const [numClassificados, setNumClassificados] = useState(4);
-  const [players, setPlayers] = useState(Array(8).fill("").map((_,i) => `Jogador ${i+1}`));
-  
+  const [players, setPlayers] = useState(Array(8).fill("").map((_,i)=>`Jogador ${i+1}`));
+
   const handleNumChange = (n) => {
     const val = Math.max(4, Math.min(32, n));
     setNumPlayers(val);
     setPlayers(prev => {
       const next = [...prev];
-      while(next.length < val) next.push(`Jogador ${next.length + 1}`);
-      return next.slice(0, val);
+      while(next.length < val) next.push(`Jogador ${next.length+1}`);
+      return next.slice(0,val);
     });
   };
 
   const handleStart = () => {
     if (!name.trim()) return alert("Dê um nome ao torneio!");
-    const uniquePlayers = players.map(p => p.trim()).filter(Boolean);
+    const uniquePlayers = players.map(p=>p.trim()).filter(Boolean);
     if (uniquePlayers.length < numPlayers) return alert("Preencha todos os nomes!");
-    
     const colors = {};
-    uniquePlayers.forEach((p, i) => colors[p] = COLOR_PALETTE[i % COLOR_PALETTE.length]);
-    
-    let groups = null;
-    let ligaMatches = [];
-    
+    uniquePlayers.forEach((p,i) => colors[p] = COLOR_PALETTE[i%COLOR_PALETTE.length]);
+    let groups = null, ligaMatches = [];
     if (type === 'copa') {
       const shuffled = shuffle(uniquePlayers);
       const groupSize = 4;
-      const numGroups = Math.ceil(uniquePlayers.length / groupSize);
+      const numGroups = Math.ceil(uniquePlayers.length/groupSize);
       groups = {};
       for (let i = 0; i < numGroups; i++) {
-        const groupPlayers = shuffled.slice(i * groupSize, (i + 1) * groupSize);
-        groups[String.fromCharCode(65 + i)] = { players: groupPlayers, matches: generateSmartMatches(groupPlayers, numConsoles) };
+        const gp = shuffled.slice(i*groupSize,(i+1)*groupSize);
+        groups[String.fromCharCode(65+i)] = { players:gp, matches:generateSmartMatches(gp,numConsoles) };
       }
     } else {
       ligaMatches = generateSmartMatches(uniquePlayers, numConsoles);
     }
-
-    const newTournament = {
-      id: Date.now().toString(),
-      name, type, players: uniquePlayers, colors, groups, ligaMatches,
+    const tournament = {
+      id: Date.now().toString(), name, type,
+      players: uniquePlayers, colors,
+      groups: groups || null,
+      ligaMatches: ligaMatches || [],
       numClassificados, numConsoles,
       results: {}, bracket: null, champion: null,
       createdAt: Date.now()
     };
-
-    // Grava no Firebase e Inicia
-    db.ref('tournaments/' + newTournament.id).set(newTournament).then(() => {
-      onStart(newTournament);
-    });
+    fbSave(tournament);
+    onStart(tournament);
   };
 
   return (
-    <div style={{ maxWidth: 500, margin: "0 auto", padding: "40px 16px" }}>
-      <Btn outline small onClick={onBack} style={{ marginBottom: 20 }}>← Voltar</Btn>
+    <div style={{ maxWidth:500, margin:"0 auto", padding:"40px 16px" }}>
+      <Btn outline small onClick={onBack} style={{ marginBottom:20 }}>← Voltar</Btn>
       <div className="card">
-        <h2 style={{ margin: "0 0 20px" }}>Configuração</h2>
-        <label style={{ fontSize: 11, color: "#64748b" }}>NOME DO TORNEIO</label>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: 12, color: "#fff", marginBottom: 16 }} />
-        
-        <label style={{ fontSize: 11, color: "#64748b" }}>FORMATO</label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <Btn outline={type !== 'copa'} onClick={() => setType('copa')} style={{ flex: 1 }}>Copa</Btn>
-          <Btn outline={type !== 'liga'} onClick={() => setType('liga')} style={{ flex: 1 }}>Liga</Btn>
+        <h2 style={{ margin:"0 0 20px" }}>Configuração</h2>
+        <label style={{ fontSize:11, color:"#64748b" }}>NOME DO TORNEIO</label>
+        <input type="text" value={name} onChange={e=>setName(e.target.value)}
+          style={{ width:"100%", background:"#0f172a", border:"1px solid #334155", borderRadius:8, padding:12, color:"#fff", marginBottom:16 }} />
+        <label style={{ fontSize:11, color:"#64748b" }}>FORMATO</label>
+        <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+          <Btn outline={type!=='copa'} onClick={()=>setType('copa')} style={{ flex:1 }}>Copa</Btn>
+          <Btn outline={type!=='liga'} onClick={()=>setType('liga')} style={{ flex:1 }}>Liga</Btn>
         </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
           <div>
-            <label style={{ fontSize: 11, color: "#64748b" }}>JOGADORES: {numPlayers}</label>
-            <input type="range" min="4" max="32" value={numPlayers} onChange={e => handleNumChange(parseInt(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize:11, color:"#64748b" }}>JOGADORES: {numPlayers}</label>
+            <input type="range" min="4" max="32" value={numPlayers} onChange={e=>handleNumChange(parseInt(e.target.value))} style={{ width:"100%" }} />
           </div>
           <div>
-            <label style={{ fontSize: 11, color: "#64748b" }}>CONSOLES: {numConsoles}</label>
-            <input type="range" min="1" max="8" value={numConsoles} onChange={e => setNumConsoles(parseInt(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize:11, color:"#64748b" }}>CONSOLES: {numConsoles}</label>
+            <input type="range" min="1" max="8" value={numConsoles} onChange={e=>setNumConsoles(parseInt(e.target.value))} style={{ width:"100%" }} />
           </div>
         </div>
-        
-        <label style={{ fontSize: 11, color: "#64748b" }}>CLASSIFICADOS PARA O MATA-MATA</label>
-        <select value={numClassificados} onChange={e => setNumClassificados(Number(e.target.value))} style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 8, padding: 12, color: "#fff", marginBottom: 20 }}>
+        <label style={{ fontSize:11, color:"#64748b" }}>CLASSIFICADOS PARA O MATA-MATA</label>
+        <select value={numClassificados} onChange={e=>setNumClassificados(Number(e.target.value))}
+          style={{ width:"100%", background:"#0f172a", border:"1px solid #334155", borderRadius:8, padding:12, color:"#fff", marginBottom:20 }}>
           <option value={2}>Top 2 (Final)</option>
           <option value={4}>Top 4 (Semi)</option>
-          <option value={8} disabled={numPlayers < 8}>Top 8 (Quartas)</option>
-          <option value={16} disabled={numPlayers < 16}>Top 16 (Oitavas)</option>
+          <option value={8} disabled={numPlayers<8}>Top 8 (Quartas)</option>
+          <option value={16} disabled={numPlayers<16}>Top 16 (Oitavas)</option>
         </select>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          {players.map((p, i) => (
-            <input key={i} type="text" value={p} onChange={e => {
-              const next = [...players];
-              next[i] = e.target.value;
-              setPlayers(next);
-            }} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: 8, color: "#fff", fontSize: 13 }} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+          {players.map((p,i) => (
+            <input key={i} type="text" value={p} onChange={e=>{const n=[...players];n[i]=e.target.value;setPlayers(n);}}
+              style={{ background:"#0f172a", border:"1px solid #334155", borderRadius:6, padding:8, color:"#fff", fontSize:13 }} />
           ))}
         </div>
       </div>
-      <Btn onClick={handleStart} color="#10b981" style={{ width: "100%" }}>Iniciar Torneio Online 🎮</Btn>
+      <Btn onClick={handleStart} color="#10b981" style={{ width:"100%" }}>Iniciar Torneio 🎮</Btn>
     </div>
   );
 }
@@ -263,208 +292,210 @@ function SetupScreen({ onStart, onBack }) {
 function TournamentApp({ tournament, onBack }) {
   const [tab, setTab] = useState("jogos");
   const [data, setData] = useState(tournament);
+  const [saving, setSaving] = useState(false);
   const pdfRef = useRef();
 
-  // Escuta as alterações no Firebase em tempo real
+  // Ouvir mudanças em tempo real do Firebase
   useEffect(() => {
-    if (!tournament?.id) return;
-    const ref = db.ref('tournaments/' + tournament.id);
-    ref.on('value', snapshot => {
-      if(snapshot.exists()) {
-        setData(snapshot.val());
-      }
+    const unsub = fbWatch(tournament.id, (val) => {
+      if (val) setData(val);
     });
-    return () => ref.off();
-  }, [tournament?.id]);
+    return unsub;
+  }, [tournament.id]);
+
+  const saveToFirebase = (newData) => {
+    setSaving(true);
+    fbSave(newData);
+    setTimeout(() => setSaving(false), 800);
+  };
 
   const setScore = (matchKey, ga, gb) => {
-    db.ref(`tournaments/${data.id}/results/${matchKey}`).set({
-      ga: ga === "" ? "" : Number(ga),
-      gb: gb === "" ? "" : Number(gb)
+    setData(prev => {
+      const next = { ...prev, results: { ...prev.results, [matchKey]: { ga:ga===""?"":Number(ga), gb:gb===""?"":Number(gb) } } };
+      saveToFirebase(next);
+      return next;
     });
   };
 
   const setBracketScore = (phase, index, ga, gb) => {
-    db.ref(`tournaments/${data.id}/bracket/${phase}/${index}/score`).set({
-      ga: ga === "" ? "" : Number(ga),
-      gb: gb === "" ? "" : Number(gb)
+    setData(prev => {
+      const nextBracket = JSON.parse(JSON.stringify(prev.bracket));
+      nextBracket[phase][index].score = { ga:ga===""?"":Number(ga), gb:gb===""?"":Number(gb) };
+      const next = { ...prev, bracket:nextBracket };
+      saveToFirebase(next);
+      return next;
     });
   };
 
-  const getStats = (playerList, results = {}) => {
+  const getStats = (playerList, results) => {
     const stats = {};
-    playerList.forEach(p => stats[p] = { j: 0, pts: 0, v: 0, e: 0, d: 0, gp: 0, gc: 0, sg: 0 });
-    Object.entries(results).forEach(([key, score]) => {
-      if (score.ga === "" || score.gb === "" || score.ga === undefined) return;
-      const [p1, p2] = key.split("_vs_");
-      if (!stats[p1] || !stats[p2]) return;
+    playerList.forEach(p => stats[p] = { j:0,pts:0,v:0,e:0,d:0,gp:0,gc:0,sg:0 });
+    Object.entries(results||{}).forEach(([key,score]) => {
+      if (score.ga===""||score.gb===""||score.ga===undefined) return;
+      const [p1,p2] = key.split("_vs_");
+      if (!stats[p1]||!stats[p2]) return;
       stats[p1].j++; stats[p2].j++;
-      stats[p1].gp += score.ga; stats[p1].gc += score.gb;
-      stats[p2].gp += score.gb; stats[p2].gc += score.ga;
-      if (score.ga > score.gb) { stats[p1].pts += 3; stats[p1].v++; stats[p2].d++; }
-      else if (score.ga < score.gb) { stats[p2].pts += 3; stats[p2].v++; stats[p1].d++; }
-      else { stats[p1].pts += 1; stats[p2].pts += 1; stats[p1].e++; stats[p2].e++; }
-      stats[p1].sg = stats[p1].gp - stats[p1].gc;
-      stats[p2].sg = stats[p2].gp - stats[p2].gc;
+      stats[p1].gp+=score.ga; stats[p1].gc+=score.gb;
+      stats[p2].gp+=score.gb; stats[p2].gc+=score.ga;
+      if (score.ga>score.gb) { stats[p1].pts+=3;stats[p1].v++;stats[p2].d++; }
+      else if (score.ga<score.gb) { stats[p2].pts+=3;stats[p2].v++;stats[p1].d++; }
+      else { stats[p1].pts++;stats[p2].pts++;stats[p1].e++;stats[p2].e++; }
+      stats[p1].sg=stats[p1].gp-stats[p1].gc;
+      stats[p2].sg=stats[p2].gp-stats[p2].gc;
     });
-    return Object.entries(stats).sort((a, b) => b[1].pts - a[1].pts || b[1].sg - a[1].sg || b[1].gp - a[1].gp);
+    return Object.entries(stats).sort((a,b)=>b[1].pts-a[1].pts||b[1].sg-a[1].sg||b[1].gp-a[1].gp);
   };
 
   const goleadas = useMemo(() => {
     const list = [];
-    Object.entries(data.results || {}).forEach(([key, score]) => {
-      if (score.ga === "" || score.gb === "" || score.ga === undefined) return;
-      const [p1, p2] = key.split("_vs_");
-      const diff = Math.abs(score.ga - score.gb);
-      if (diff >= 3) list.push({ p1, p2, ga: score.ga, gb: score.gb, diff });
+    Object.entries(data.results||{}).forEach(([key,score]) => {
+      if (score.ga===""||score.gb===""||score.ga===undefined) return;
+      const [p1,p2] = key.split("_vs_");
+      const diff = Math.abs(score.ga-score.gb);
+      if (diff>=3) list.push({p1,p2,ga:score.ga,gb:score.gb,diff});
     });
-    return list.sort((a, b) => b.diff - a.diff).slice(0, 10);
-  }, [data.results]);
+    return list.sort((a,b)=>b.diff-a.diff).slice(0,10);
+  }, [data]);
 
   const initBracket = () => {
     const qualified = [];
-    if (data.type === 'copa') {
+    if (data.type==='copa') {
       Object.keys(data.groups).sort().forEach(g => {
-        const sorted = getStats(data.groups[g].players, data.results);
-        if (sorted.length >= 1) qualified.push(sorted[0][0]);
-        if (sorted.length >= 2) qualified.push(sorted[1][0]);
+        const sorted = getStats(data.groups[g].players,data.results);
+        if (sorted.length>=1) qualified.push(sorted[0][0]);
+        if (sorted.length>=2) qualified.push(sorted[1][0]);
       });
     } else {
-      const sorted = getStats(data.players, data.results);
-      qualified.push(...sorted.slice(0, data.numClassificados).map(x => x[0]));
+      const sorted = getStats(data.players,data.results);
+      qualified.push(...sorted.slice(0,data.numClassificados).map(x=>x[0]));
     }
-
-    const finalQualified = qualified.slice(0, data.numClassificados);
-    if (finalQualified.length < 2) return alert("Jogadores insuficientes!");
-
-    let phase = finalQualified.length >= 16 ? 'oitavas' : finalQualified.length >= 8 ? 'quartas' : finalQualified.length >= 4 ? 'semi' : 'final';
+    const fq = qualified.slice(0,data.numClassificados);
+    if (fq.length<2) return alert("Jogadores insuficientes!");
+    let phase = fq.length>=16?'oitavas':fq.length>=8?'quartas':fq.length>=4?'semi':'final';
     let matches = [];
-    for (let i = 0; i < finalQualified.length / 2; i++) {
-      matches.push({ p1: finalQualified[i], p2: finalQualified[finalQualified.length - 1 - i], score: { ga: "", gb: "" } });
-    }
-
-    db.ref(`tournaments/${data.id}/bracket`).set({ 
-      oitavas: phase === 'oitavas' ? matches : [],
-      quartas: phase === 'quartas' ? matches : [], 
-      semi: phase === 'semi' ? matches : [], 
-      final: phase === 'final' ? matches : [] 
-    });
-    setTab("mata-mata");
+    for (let i=0;i<fq.length/2;i++)
+      matches.push({p1:fq[i],p2:fq[fq.length-1-i],score:{ga:"",gb:""}});
+    const next = { ...data, bracket:{
+      oitavas:phase==='oitavas'?matches:[],
+      quartas:phase==='quartas'?matches:[],
+      semi:phase==='semi'?matches:[],
+      final:phase==='final'?matches:[]
+    }};
+    setData(next); saveToFirebase(next); setTab("mata-mata");
   };
 
   const advanceWinner = (phase, index) => {
     const match = data.bracket[phase][index];
-    if (match.score.ga === "" || match.score.gb === "" || match.score.ga === undefined) return alert("Insira o placar!");
-    if (match.score.ga === match.score.gb) return alert("Mata-mata não pode empatar!");
-    const winner = match.score.ga > match.score.gb ? match.p1 : match.p2;
-    
-    const nextBracket = JSON.parse(JSON.stringify(data.bracket));
-
-    if (phase === 'oitavas') {
-      if (!nextBracket.quartas || nextBracket.quartas.length === 0) {
-        nextBracket.quartas = Array(4).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
-      }
-      const nextIdx = Math.floor(index / 2);
-      if (index % 2 === 0) nextBracket.quartas[nextIdx].p1 = winner; else nextBracket.quartas[nextIdx].p2 = winner;
-    } else if (phase === 'quartas') {
-      if (!nextBracket.semi || nextBracket.semi.length === 0) {
-        nextBracket.semi = Array(2).fill(null).map(() => ({ p1: null, p2: null, score: { ga: "", gb: "" } }));
-      }
-      const nextIdx = Math.floor(index / 2);
-      if (index % 2 === 0) nextBracket.semi[nextIdx].p1 = winner; else nextBracket.semi[nextIdx].p2 = winner;
-    } else if (phase === 'semi') {
-      if (!nextBracket.final || nextBracket.final.length === 0) {
-        nextBracket.final = [{ p1: null, p2: null, score: { ga: "", gb: "" } }];
-      }
-      if (index === 0) nextBracket.final[0].p1 = winner; else nextBracket.final[0].p2 = winner;
-    } else {
-      db.ref(`tournaments/${data.id}/champion`).set(winner);
-      return;
-    }
-    db.ref(`tournaments/${data.id}/bracket`).set(nextBracket);
+    if (match.score.ga===""||match.score.gb===""||match.score.ga===undefined) return alert("Insira o placar!");
+    if (match.score.ga===match.score.gb) return alert("Mata-mata não pode empatar!");
+    const winner = match.score.ga>match.score.gb?match.p1:match.p2;
+    setData(prev => {
+      const nb = JSON.parse(JSON.stringify(prev.bracket));
+      let champion = prev.champion;
+      if (phase==='oitavas') {
+        if (!nb.quartas||nb.quartas.length===0) nb.quartas=Array(4).fill(null).map(()=>({p1:null,p2:null,score:{ga:"",gb:""}}));
+        const ni=Math.floor(index/2);
+        if (index%2===0) nb.quartas[ni].p1=winner; else nb.quartas[ni].p2=winner;
+      } else if (phase==='quartas') {
+        if (!nb.semi||nb.semi.length===0) nb.semi=Array(2).fill(null).map(()=>({p1:null,p2:null,score:{ga:"",gb:""}}));
+        const ni=Math.floor(index/2);
+        if (index%2===0) nb.semi[ni].p1=winner; else nb.semi[ni].p2=winner;
+      } else if (phase==='semi') {
+        if (!nb.final||nb.final.length===0) nb.final=[{p1:null,p2:null,score:{ga:"",gb:""}}];
+        if (index===0) nb.final[0].p1=winner; else nb.final[0].p2=winner;
+      } else { champion=winner; }
+      const next={...prev,bracket:nb,champion};
+      saveToFirebase(next); return next;
+    });
   };
 
   const shareWhatsApp = () => {
-    let text = `*🏆 ${data.name.toUpperCase()}*\n\n`;
-    text += `*📊 CLASSIFICAÇÃO ATUAL*\n`;
-    getStats(data.players, data.results).forEach(([p, s], i) => {
-      text += `${i+1}º ${p} | ${s.pts}pts (${s.v}V, ${s.sg}SG)\n`;
+    let text=`*🏆 ${data.name.toUpperCase()}*\n\n*📊 CLASSIFICAÇÃO ATUAL*\n`;
+    getStats(data.players,data.results).forEach(([p,s],i)=>{
+      text+=`${i+1}º ${p} | ${s.pts}pts (${s.v}V, ${s.sg}SG)\n`;
     });
-    if (data.champion) text += `\n*👑 CAMPEÃO: ${data.champion.toUpperCase()}* 🏆`;
-    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    if (data.champion) text+=`\n*👑 CAMPEÃO: ${data.champion.toUpperCase()}* 🏆`;
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`,'_blank');
   };
 
   const generatePDF = () => {
-    const element = pdfRef.current;
-    const opt = { margin: 0, filename: `tabela_${data.name}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'in', format: 'letter', orientation: 'landscape' } };
-    html2pdf().set(opt).from(element).save();
+    const opt={margin:0,filename:`tabela_${data.name}.pdf`,image:{type:'jpeg',quality:0.98},html2canvas:{scale:2},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}};
+    html2pdf().set(opt).from(pdfRef.current).save();
   };
 
   return (
-    <div style={{ paddingBottom: 100 }}>
-      <div style={{ background: "#1e293b", padding: "16px", borderBottom: "1px solid #334155", position: "sticky", top: 0, zIndex: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: 900, margin: "0 auto" }}>
+    <div style={{ paddingBottom:100 }}>
+      <div style={{ background:"#1e293b", padding:"12px 16px", borderBottom:"1px solid #334155", position:"sticky", top:0, zIndex:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", maxWidth:900, margin:"0 auto" }}>
           <Btn outline small onClick={onBack}>← Sair</Btn>
-          <div style={{ fontWeight: 900 }}>{data.name}</div>
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ textAlign:"center" }}>
+            <div style={{ fontWeight:900, fontSize:14 }}>{data.name}</div>
+            <div style={{ fontSize:10, color: saving?"#f59e0b":"#10b981" }}>
+              {saving ? "💾 Salvando..." : "✅ Salvo · Todos veem em tempo real"}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
             <Btn small color="#8b5cf6" onClick={generatePDF}>PDF 📄</Btn>
             <Btn small color="#25D366" onClick={shareWhatsApp}>Zap 📲</Btn>
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "16px" }}>
-        <div style={{ display: "flex", gap: 6, marginBottom: 20, overflowX: "auto" }}>
-          <Btn small outline={tab !== 'jogos'} onClick={() => setTab('jogos')}>🎮 Jogos</Btn>
-          <Btn small outline={tab !== 'tabela'} onClick={() => setTab('tabela')}>📊 Tabela</Btn>
-          <Btn small outline={tab !== 'mata-mata'} onClick={() => setTab('mata-mata')}>⚔️ Mata-Mata</Btn>
-          <Btn small outline={tab !== 'goleadas'} onClick={() => setTab('goleadas')}>💥 Goleadas</Btn>
+      <div style={{ maxWidth:900, margin:"0 auto", padding:"16px" }}>
+        <div style={{ display:"flex", gap:6, marginBottom:20, overflowX:"auto" }}>
+          <Btn small outline={tab!=='jogos'} onClick={()=>setTab('jogos')}>🎮 Jogos</Btn>
+          <Btn small outline={tab!=='tabela'} onClick={()=>setTab('tabela')}>📊 Tabela</Btn>
+          <Btn small outline={tab!=='mata-mata'} onClick={()=>setTab('mata-mata')}>⚔️ Mata-Mata</Btn>
+          <Btn small outline={tab!=='goleadas'} onClick={()=>setTab('goleadas')}>💥 Goleadas</Btn>
         </div>
 
-        {tab === 'jogos' && (
+        {tab==='jogos' && (
           <div>
-            <div className="card" style={{ background: "#334155", border: "none" }}>
-              <p style={{ margin: 0, fontSize: 12, fontWeight: 700 }}>🚀 MODO MULTI-CONSOLE ATIVO: {data.numConsoles} APARELHOS</p>
+            <div className="card" style={{ background:"#334155", border:"none" }}>
+              <p style={{ margin:0, fontSize:12, fontWeight:700 }}>🚀 MODO MULTI-CONSOLE: {data.numConsoles} APARELHO(S) · Todos veem os placares em tempo real</p>
             </div>
-            {(data.type === 'copa' ? Object.keys(data.groups || {}).sort() : ['LIGA']).map(g => (
+            {(data.type==='copa'?Object.keys(data.groups||{}).sort():['LIGA']).map(g => (
               <div key={g} className="card">
-                <h3 style={{ marginTop: 0, fontSize: 14, color: "#3b82f6" }}>{g === 'LIGA' ? 'ORDEM DAS PARTIDAS' : `GRUPO ${g}`}</h3>
-                {(g === 'LIGA' ? data.ligaMatches : data.groups[g].matches).map(([p1, p2], idx) => {
-                  const key = `${p1}_vs_${p2}`, score = (data.results && data.results[key]) || { ga: "", gb: "" };
-                  const consoleNum = (idx % data.numConsoles) + 1;
-                  const isCurrentRound = idx < data.numConsoles;
+                <h3 style={{ marginTop:0, fontSize:14, color:"#3b82f6" }}>{g==='LIGA'?'ORDEM DAS PARTIDAS':`GRUPO ${g}`}</h3>
+                {(g==='LIGA'?data.ligaMatches:data.groups[g].matches).map(([p1,p2],idx) => {
+                  const key=`${p1}_vs_${p2}`, score=data.results?.[key]||{ga:"",gb:""};
+                  const consoleNum=(idx%data.numConsoles)+1;
+                  const isCurrentRound=idx<data.numConsoles;
                   return (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, background: isCurrentRound ? "rgba(59,130,246,0.1)" : "#0f172a", padding: 8, borderRadius: 8, marginBottom: 6, border: isCurrentRound ? "1px solid #3b82f6" : "1px solid transparent" }}>
+                    <div key={key} style={{ display:"flex", alignItems:"center", gap:10,
+                      background:isCurrentRound?"rgba(59,130,246,0.1)":"#0f172a",
+                      padding:8, borderRadius:8, marginBottom:6,
+                      border:isCurrentRound?"1px solid #3b82f6":"1px solid transparent" }}>
                       <span className="console-badge">C{consoleNum}</span>
-                      <div style={{ flex: 1, textAlign: "right", fontSize: 13 }}>{p1}</div>
-                      <input type="number" className="input-score" value={score.ga} onChange={e => setScore(key, e.target.value, score.gb)} />
+                      <div style={{ flex:1, textAlign:"right", fontSize:13 }}>{p1}</div>
+                      <input type="number" className="input-score" value={score.ga} onChange={e=>setScore(key,e.target.value,score.gb)} />
                       <span>×</span>
-                      <input type="number" className="input-score" value={score.gb} onChange={e => setScore(key, score.ga, e.target.value)} />
-                      <div style={{ flex: 1, fontSize: 13 }}>{p2}</div>
+                      <input type="number" className="input-score" value={score.gb} onChange={e=>setScore(key,score.ga,e.target.value)} />
+                      <div style={{ flex:1, fontSize:13 }}>{p2}</div>
                     </div>
                   );
                 })}
               </div>
             ))}
-            {!data.bracket && <Btn onClick={initBracket} color="#8b5cf6" style={{ width: "100%" }}>Iniciar Mata-Mata</Btn>}
+            {!data.bracket && <Btn onClick={initBracket} color="#8b5cf6" style={{ width:"100%" }}>Iniciar Mata-Mata</Btn>}
           </div>
         )}
 
-        {tab === 'tabela' && (
+        {tab==='tabela' && (
           <div>
-            {(data.type === 'copa' ? Object.keys(data.groups || {}).sort() : ['LIGA']).map(g => (
+            {(data.type==='copa'?Object.keys(data.groups||{}).sort():['LIGA']).map(g => (
               <div key={g} className="card">
-                <h3 style={{ marginTop: 0, fontSize: 14, color: "#3b82f6" }}>{g === 'LIGA' ? 'CLASSIFICAÇÃO' : `GRUPO ${g}`}</h3>
-                <div style={{ overflowX: "auto" }}>
+                <h3 style={{ marginTop:0, fontSize:14, color:"#3b82f6" }}>{g==='LIGA'?'CLASSIFICAÇÃO':`GRUPO ${g}`}</h3>
+                <div style={{ overflowX:"auto" }}>
                   <table>
                     <thead>
                       <tr><th align="left">Pos</th><th align="left">Jogador</th><th>J</th><th>PTS</th><th>V</th><th>E</th><th>D</th><th>GP</th><th>GC</th><th>SG</th></tr>
                     </thead>
                     <tbody>
-                      {getStats(g === 'LIGA' ? data.players : data.groups[g].players, data.results).map(([p, s], i) => (
+                      {getStats(g==='LIGA'?data.players:data.groups[g].players, data.results).map(([p,s],i) => (
                         <tr key={p}>
-                          <td><span className="badge-pos" style={{ background: i < data.numClassificados ? "#10b981" : "#334155" }}>{i+1}</span></td>
-                          <td><PlayerBadge name={p} color={data.colors[p]} small /></td>
+                          <td><span className="badge-pos" style={{ background:i<data.numClassificados?"#10b981":"#334155" }}>{i+1}</span></td>
+                          <td><PlayerBadge name={p} color={data.colors?.[p]} small /></td>
                           <td align="center">{s.j}</td><td align="center"><b>{s.pts}</b></td>
                           <td align="center">{s.v}</td><td align="center">{s.e}</td><td align="center">{s.d}</td>
                           <td align="center">{s.gp}</td><td align="center">{s.gc}</td><td align="center">{s.sg}</td>
@@ -478,66 +509,65 @@ function TournamentApp({ tournament, onBack }) {
           </div>
         )}
 
-        {tab === 'mata-mata' && (
+        {tab==='mata-mata' && (
           <div>
-            {data.bracket && ['oitavas', 'quartas', 'semi', 'final'].map(phase => (
-              data.bracket[phase] && data.bracket[phase].length > 0 && (
-                <div key={phase} style={{ marginBottom: 24 }}>
-                  <h3 style={{ textAlign: "center", textTransform: "uppercase", fontSize: 12, color: "#3b82f6" }}>{phase}</h3>
-                  {data.bracket[phase].map((m, i) => (
-                    <div key={i} className="card" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span className="console-badge">C{(i % data.numConsoles) + 1}</span>
-                      <div style={{ flex: 1, textAlign: "right" }}>{m.p1 ? <PlayerBadge name={m.p1} color={data.colors[m.p1]} /> : "?"}</div>
-                      <input type="number" className="input-score" value={m.score.ga} onChange={e => setBracketScore(phase, i, e.target.value, m.score.gb)} />
+            {data.bracket && ['oitavas','quartas','semi','final'].map(phase => (
+              data.bracket[phase]&&data.bracket[phase].length>0 && (
+                <div key={phase} style={{ marginBottom:24 }}>
+                  <h3 style={{ textAlign:"center", textTransform:"uppercase", fontSize:12, color:"#3b82f6" }}>{phase}</h3>
+                  {data.bracket[phase].map((m,i) => (
+                    <div key={i} className="card" style={{ display:"flex", alignItems:"center", gap:10 }}>
+                      <span className="console-badge">C{(i%data.numConsoles)+1}</span>
+                      <div style={{ flex:1, textAlign:"right" }}>{m.p1?<PlayerBadge name={m.p1} color={data.colors?.[m.p1]} />:"?"}</div>
+                      <input type="number" className="input-score" value={m.score.ga} onChange={e=>setBracketScore(phase,i,e.target.value,m.score.gb)} />
                       <span>×</span>
-                      <input type="number" className="input-score" value={m.score.gb} onChange={e => setBracketScore(phase, i, m.score.ga, e.target.value)} />
-                      <div style={{ flex: 1 }}>{m.p2 ? <PlayerBadge name={m.p2} color={data.colors[m.p2]} /> : "?"}</div>
-                      <Btn small onClick={() => advanceWinner(phase, i)}>✓</Btn>
+                      <input type="number" className="input-score" value={m.score.gb} onChange={e=>setBracketScore(phase,i,m.score.ga,e.target.value)} />
+                      <div style={{ flex:1 }}>{m.p2?<PlayerBadge name={m.p2} color={data.colors?.[m.p2]} />:"?"}</div>
+                      <Btn small onClick={()=>advanceWinner(phase,i)}>✓</Btn>
                     </div>
                   ))}
                 </div>
               )
             ))}
             {data.champion && (
-              <div style={{ textAlign: "center", padding: 40, border: "3px solid #fbbf24", borderRadius: 16, background: "rgba(251,191,36,0.05)" }}>
-                <div style={{ fontSize: 60 }}>🏆</div>
-                <h2 style={{ color: "#fbbf24", fontSize: 32 }}>{data.champion}</h2>
-                <p style={{ color: "#94a3b8" }}>GRANDE CAMPEÃO</p>
+              <div style={{ textAlign:"center", padding:40, border:"3px solid #fbbf24", borderRadius:16, background:"rgba(251,191,36,0.05)" }}>
+                <div style={{ fontSize:60 }}>🏆</div>
+                <h2 style={{ color:"#fbbf24", fontSize:32 }}>{data.champion}</h2>
+                <p style={{ color:"#94a3b8" }}>GRANDE CAMPEÃO</p>
               </div>
             )}
+            {!data.bracket && <p style={{ textAlign:"center", color:"#64748b" }}>Conclua a fase de grupos primeiro.</p>}
           </div>
         )}
 
-        {tab === 'goleadas' && (
+        {tab==='goleadas' && (
           <div className="card">
-            <h3 style={{ marginTop: 0 }}>💥 Maiores Goleadas</h3>
-            {goleadas.length === 0 ? <p style={{ textAlign: "center", color: "#64748b" }}>Nenhuma goleada ainda.</p> : goleadas.map((g, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: 12, background: "#0f172a", borderRadius: 8, marginBottom: 8 }}>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <PlayerBadge name={g.p1} color={data.colors[g.p1]} small />
-                  <span style={{ fontWeight: 900 }}>{g.ga} × {g.gb}</span>
-                  <PlayerBadge name={g.p2} color={data.colors[g.p2]} small />
+            <h3 style={{ marginTop:0 }}>💥 Maiores Goleadas (diferença ≥ 3)</h3>
+            {goleadas.length===0
+              ? <p style={{ textAlign:"center", color:"#64748b" }}>Nenhuma goleada ainda.</p>
+              : goleadas.map((g,i) => (
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:12, background:"#0f172a", borderRadius:8, marginBottom:8 }}>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <PlayerBadge name={g.p1} color={data.colors?.[g.p1]} small />
+                    <span style={{ fontWeight:900 }}>{g.ga} × {g.gb}</span>
+                    <PlayerBadge name={g.p2} color={data.colors?.[g.p2]} small />
+                  </div>
+                  <div style={{ color:"#10b981", fontWeight:900 }}>+{g.diff}</div>
                 </div>
-                <div style={{ color: "#10b981", fontWeight: 900 }}>+{g.diff}</div>
-              </div>
-            ))}
+              ))
+            }
           </div>
         )}
       </div>
 
-      {/* PDF TEMPLATE */}
-      <div style={{ position: "absolute", left: "-9999px" }}>
+      <div style={{ position:"absolute", left:"-9999px" }}>
         <div ref={pdfRef} className="pdf-content">
-          <h1 style={{ textAlign: "center", fontSize: 32 }}>TABELA DE CLASSIFICAÇÃO - {data.name}</h1>
+          <h1 style={{ textAlign:"center", fontSize:32 }}>TABELA DE CLASSIFICAÇÃO - {data.name}</h1>
           <table className="pdf-table">
-            <thead>
-              <tr><th>POS</th><th>JOGADOR</th><th>J</th><th>PTS</th><th>V</th><th>E</th><th>D</th><th>GP</th><th>GC</th><th>SG</th></tr>
-            </thead>
+            <thead><tr><th>POS</th><th>JOGADOR</th><th>J</th><th>PTS</th><th>V</th><th>E</th><th>D</th><th>GP</th><th>GC</th><th>SG</th></tr></thead>
             <tbody>
-              {getStats(data.players, data.results).map(([p, s], i) => (
-                <tr key={p}>
-                  <td>{i+1}º</td><td align="left">{p}</td><td>{s.j}</td><td>{s.pts}</td><td>{s.v}</td><td>{s.e}</td><td>{s.d}</td><td>{s.gp}</td><td>{s.gc}</td><td>{s.sg}</td>
-                </tr>
+              {getStats(data.players,data.results).map(([p,s],i) => (
+                <tr key={p}><td>{i+1}º</td><td align="left">{p}</td><td>{s.j}</td><td>{s.pts}</td><td>{s.v}</td><td>{s.e}</td><td>{s.d}</td><td>{s.gp}</td><td>{s.gc}</td><td>{s.sg}</td></tr>
               ))}
             </tbody>
           </table>
@@ -547,16 +577,16 @@ function TournamentApp({ tournament, onBack }) {
   );
 }
 
+// ── Root ──────────────────────────────────────────────────────────────────────
 function Root() {
   const [screen, setScreen] = useState("home");
-  const [activeTournament, setActiveTournament] = useState(null);
-  if (screen === "home") return <HomeScreen onNew={() => setScreen("setup")} onLoad={(t) => { setActiveTournament(t); setScreen("tournament"); }} />;
-  if (screen === "setup") return <SetupScreen onBack={() => setScreen("home")} onStart={(t) => { setActiveTournament(t); setScreen("tournament"); }} />;
-  if (screen === "tournament") return <TournamentApp tournament={activeTournament} onBack={() => setScreen("home")} />;
+  const [active, setActive] = useState(null);
+  if (screen==="home") return <HomeScreen onNew={()=>setScreen("setup")} onLoad={t=>{setActive(t);setScreen("tournament");}} />;
+  if (screen==="setup") return <SetupScreen onBack={()=>setScreen("home")} onStart={t=>{setActive(t);setScreen("tournament");}} />;
+  if (screen==="tournament") return <TournamentApp tournament={active} onBack={()=>setScreen("home")} />;
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<Root />);
+ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
 </script>
 </body>
 </html>
