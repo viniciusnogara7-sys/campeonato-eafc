@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EA FC 26 - Local Pro Manager</title>
+<style>
+*{box-sizing:border-box;}
+body{margin:0;padding:0;background:#0f172a;color:#e2e8f0;font-family:'Segoe UI',Roboto,sans-serif;}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:1;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:#0f172a;}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
+.card{background:#1e293b;border-radius:12px;border:1px solid #334155;padding:16px;margin-bottom:12px;}
+.iscore{width:48px;text-align:center;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px;font-weight:800;font-size:16px;}
+table{width:100%;border-collapse:collapse;font-size:12px;}
+th{color:#64748b;font-weight:700;text-transform:uppercase;padding:8px 4px;border-bottom:1px solid #334155;}
+td{padding:9px 4px;border-bottom:1px solid #1e293b;}
+.cbadge{background:#3b82f6;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:900;margin-right:8px;}
+.pulse{animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+</style>
+</head>
+<body>
+<div id="root"><div style="text-align:center;padding:60px;color:#64748b;">Carregando...</div></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<script>
+// ── Firebase ──────────────────────────────────────────────────────────────────
+firebase.initializeApp({
+  apiKey:"AIzaSyDtf8IBG9P-Ai2MBxUom2tNRg6eoDI5h5c",
+  authDomain:"campeonato-eafc.firebaseapp.com",
+  databaseURL:"https://campeonato-eafc-default-rtdb.firebaseio.com",
+  projectId:"campeonato-eafc",
+  storageBucket:"campeonato-eafc.firebasestorage.app",
+  messagingSenderId:"636657002055",
+  appId:"1:636657002055:web:1bf2729ad7895cdf29f362"
+});
+var db = firebase.database();
+
+function fbSave(t){ db.ref("tournaments/"+t.id).set(t); }
+function fbDelete(id){ db.ref("tournaments/"+id).remove(); }
+function fbWatch(id,cb){ var r=db.ref("tournaments/"+id); r.on('value',function(s){cb(s.val());}); return function(){r.off();}; }
+function fbWatchAll(cb){
+  var r=db.ref("tournaments");
+  r.on('value',function(s){
+    var val=s.val();
+    cb(val?Object.values(val).sort(function(a,b){return (b.createdAt||0)-(a.createdAt||0);}):[]); 
+  });
+  return function(){r.off();};
+}
+
+// ── Utilitários ───────────────────────────────────────────────────────────────
+var COLORS=["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#f97316","#84cc16","#06b6d4","#a855f7","#f43f5e","#22c55e","#eab308","#64748b"];
+
+function shuffle(arr){
+  var a=arr.slice();
+  for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tmp=a[i];a[i]=a[j];a[j]=tmp;}
+  return a;
+}
+
+function genMatches(players,nc){
+  var all=[];
+  for(var i=0;i<players.length;i++) for(var j=i+1;j<players.length;j++) all.push([players[i],players[j]]);
+  all=shuffle(all);
+  var out=[],last=[];
+  while(all.length){
+    var idx=-1;
+    for(var i=0;i<all.length;i++){
+      var p1=all[i][0],p2=all[i][1];
+      if(last.filter(function(p){return p===p1;}).length<2 && last.filter(function(p){return p===p2;}).length<2){idx=i;break;}
+    }
+    if(idx===-1)idx=0;
+    var m=all.splice(idx,1)[0];
+    out.push(m); last.push(m[0],m[1]);
+    if(last.length>nc*4)last.splice(0,2);
+  }
+  return out;
+}
+
+function getStats(playerList,results){
+  var stats={};
+  playerList.forEach(function(p){stats[p]={j:0,pts:0,v:0,e:0,d:0,gp:0,gc:0,sg:0};});
+  Object.entries(results||{}).forEach(function(entry){
+    var key=entry[0],score=entry[1];
+    if(score.ga===""||score.gb===""||score.ga===undefined)return;
+    var parts=key.split("_vs_"),p1=parts[0],p2=parts[1];
+    if(!stats[p1]||!stats[p2])return;
+    stats[p1].j++;stats[p2].j++;
+    stats[p1].gp+=Number(score.ga);stats[p1].gc+=Number(score.gb);
+    stats[p2].gp+=Number(score.gb);stats[p2].gc+=Number(score.ga);
+    if(Number(score.ga)>Number(score.gb)){stats[p1].pts+=3;stats[p1].v++;stats[p2].d++;}
+    else if(Number(score.ga)<Number(score.gb)){stats[p2].pts+=3;stats[p2].v++;stats[p1].d++;}
+    else{stats[p1].pts++;stats[p2].pts++;stats[p1].e++;stats[p2].e++;}
+    stats[p1].sg=stats[p1].gp-stats[p1].gc;
+    stats[p2].sg=stats[p2].gp-stats[p2].gc;
+  });
+  return Object.entries(stats).sort(function(a,b){return b[1].pts-a[1].pts||b[1].sg-a[1].sg||b[1].gp-a[1].gp;});
+}
+
+// ── Helpers React sem JSX ─────────────────────────────────────────────────────
+var h=React.createElement;
+var useState=React.useState;
+var useEffect=React.useEffect;
+var useRef=React.useRef;
+var useMemo=React.useMemo;
+
+function Badge(p){
+  var c=p.color||"#64748b";
+  return h('span',{style:{background:c+"22",border:"1.5px solid "+c,color:c,borderRadius:6,padding:p.small?"2px 5px":"3px 10px",fontWeight:700,fontSize:p.small?10:13,whiteSpace:"nowrap",display:"inline-block"}},p.name);
+}
+
+function Btn(p){
+  var bg=p.danger?"#ef4444":p.outline?"transparent":(p.color||"#3b82f6");
+  var bd=p.danger?"#ef4444":(p.color||"#3b82f6");
+  var style=Object.assign({background:p.disabled?"#1e293b":bg,border:"1.5px solid "+(p.disabled?"#334155":bd),color:p.disabled?"#475569":p.outline?(p.color||"#3b82f6"):"#fff",borderRadius:8,padding:p.small?"6px 10px":"9px 18px",fontWeight:700,fontSize:p.small?11:14,cursor:p.disabled?"default":"pointer",whiteSpace:"nowrap"},p.style||{});
+  return h('button',{onClick:p.onClick,disabled:p.disabled,style:style},p.children);
+}
+
+// ── HomeScreen ────────────────────────────────────────────────────────────────
+function HomeScreen(p){
+  var s=useState([]),saved=s[0],setSaved=s[1];
+  var l=useState(true),loading=l[0],setLoading=l[1];
+  useEffect(function(){return fbWatchAll(function(list){setSaved(list);setLoading(false);});;},[]);
+  return h('div',{style:{maxWidth:600,margin:"0 auto",padding:"40px 16px"}},
+    h('div',{style:{textAlign:"center",marginBottom:32}},
+      h('div',{style:{fontSize:60}},"🎮"),
+      h('h1',{style:{margin:0,fontSize:32,fontWeight:900}},"EA FC 26 LOCAL"),
+      h('p',{style:{color:"#64748b"}},"Gestão Multi-Consoles Profissional"),
+      h('div',{style:{display:"flex",alignItems:"center",justifyContent:"center",gap:6,fontSize:11,color:"#10b981",marginTop:4}},
+        h('span',{className:"pulse",style:{width:7,height:7,borderRadius:"50%",background:"#10b981",display:"inline-block"}}),
+        " Dados compartilhados em tempo real"
+      )
+    ),
+    h(Btn,{onClick:p.onNew,color:"#3b82f6",style:{width:"100%",marginBottom:24,padding:18,fontSize:16}},"＋ Criar Novo Torneio"),
+    loading&&h('p',{style:{textAlign:"center",color:"#64748b"}},"Carregando..."),
+    !loading&&saved.length===0&&h('p',{style:{textAlign:"center",color:"#334155"}},"Nenhum torneio ainda. Crie o primeiro!"),
+    saved.map(function(t){
+      return h('div',{key:t.id,className:"card",style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+        h('div',null,
+          h('div',{style:{fontWeight:800}},t.name),
+          h('div',{style:{fontSize:11,color:"#64748b"}},(t.type==='copa'?'Copa':'Liga')+" · "+t.players.length+" Jogadores · "+t.numConsoles+" Console(s)"),
+          t.champion&&h('div',{style:{fontSize:11,color:"#fbbf24",marginTop:2}},"🏆 "+t.champion)
+        ),
+        h('div',{style:{display:"flex",gap:6}},
+          h(Btn,{small:true,onClick:function(){p.onLoad(t);}},"Abrir"),
+          h(Btn,{small:true,danger:true,outline:true,onClick:function(){if(confirm("Excluir para todos?"))fbDelete(t.id);}},"🗑")
+        )
+      );
+    })
+  );
+}
+
+// ── SetupScreen ───────────────────────────────────────────────────────────────
+function SetupScreen(p){
+  var ns=useState(""),name=ns[0],setName=ns[1];
+  var ts=useState("liga"),type=ts[0],setType=ts[1];
+  var nps=useState(8),numP=nps[0],setNumP=nps[1];
+  var ncs=useState(1),numC=ncs[0],setNumC=ncs[1];
+  var nks=useState(4),numK=nks[0],setNumK=nks[1];
+  var pls=useState(Array(8).fill("").map(function(_,i){return "Jogador "+(i+1);})),players=pls[0],setPlayers=pls[1];
+
+  function handleNum(n){
+    var v=Math.max(4,Math.min(32,n)); setNumP(v);
+    setPlayers(function(prev){var nx=prev.slice();while(nx.length<v)nx.push("Jogador "+(nx.length+1));return nx.slice(0,v);});
+  }
+
+  function handleStart(){
+    if(!name.trim())return alert("Dê um nome ao torneio!");
+    var up=players.map(function(p){return p.trim();}).filter(Boolean);
+    if(up.length<numP)return alert("Preencha todos os nomes!");
+    var colors={};
+    up.forEach(function(pp,i){colors[pp]=COLORS[i%COLORS.length];});
+    var groups=null,ligaMatches=[];
+    if(type==='copa'){
+      var sh=shuffle(up),gs=4,ng=Math.ceil(up.length/gs);
+      groups={};
+      for(var i=0;i<ng;i++){var gp=sh.slice(i*gs,(i+1)*gs);groups[String.fromCharCode(65+i)]={players:gp,matches:genMatches(gp,numC)};}
+    } else { ligaMatches=genMatches(up,numC); }
+    var t={id:Date.now().toString(),name:name,type:type,players:up,colors:colors,groups:groups,ligaMatches:ligaMatches,numClassificados:numK,numConsoles:numC,results:{},bracket:null,champion:null,createdAt:Date.now()};
+    fbSave(t); p.onStart(t);
+  }
+
+  return h('div',{style:{maxWidth:500,margin:"0 auto",padding:"40px 16px"}},
+    h(Btn,{outline:true,small:true,onClick:p.onBack,style:{marginBottom:20}},"← Voltar"),
+    h('div',{className:"card"},
+      h('h2',{style:{margin:"0 0 20px"}},"Configuração"),
+      h('label',{style:{fontSize:11,color:"#64748b"}},"NOME DO TORNEIO"),
+      h('input',{type:"text",value:name,onChange:function(e){setName(e.target.value);},style:{width:"100%",background:"#0f172a",border:"1px solid #334155",borderRadius:8,padding:12,color:"#fff",marginBottom:16,display:"block"}}),
+      h('label',{style:{fontSize:11,color:"#64748b"}},"FORMATO"),
+      h('div',{style:{display:"flex",gap:8,marginBottom:16}},
+        h(Btn,{outline:type!=='copa',onClick:function(){setType('copa');},style:{flex:1}},"Copa"),
+        h(Btn,{outline:type!=='liga',onClick:function(){setType('liga');},style:{flex:1}},"Liga")
+      ),
+      h('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}},
+        h('div',null,
+          h('label',{style:{fontSize:11,color:"#64748b"}},"JOGADORES: "+numP),
+          h('input',{type:"range",min:4,max:32,value:numP,onChange:function(e){handleNum(parseInt(e.target.value));},style:{width:"100%"}})
+        ),
+        h('div',null,
+          h('label',{style:{fontSize:11,color:"#64748b"}},"CONSOLES: "+numC),
+          h('input',{type:"range",min:1,max:8,value:numC,onChange:function(e){setNumC(parseInt(e.target.value));},style:{width:"100%"}})
+        )
+      ),
+      h('label',{style:{fontSize:11,color:"#64748b"}},"CLASSIFICADOS PARA O MATA-MATA"),
+      h('select',{value:numK,onChange:function(e){setNumK(Number(e.target.value));},style:{width:"100%",background:"#0f172a",border:"1px solid #334155",borderRadius:8,padding:12,color:"#fff",marginBottom:20,display:"block"}},
+        h('option',{value:2},"Top 2 (Final)"),
+        h('option',{value:4},"Top 4 (Semi)"),
+        h('option',{value:8,disabled:numP<8},"Top 8 (Quartas)"),
+        h('option',{value:16,disabled:numP<16},"Top 16 (Oitavas)")
+      ),
+      h('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+        players.map(function(pp,i){
+          return h('input',{key:i,type:"text",value:pp,onChange:function(e){var n=players.slice();n[i]=e.target.value;setPlayers(n);},style:{background:"#0f172a",border:"1px solid #334155",borderRadius:6,padding:8,color:"#fff",fontSize:13}});
+        })
+      )
+    ),
+    h(Btn,{onClick:handleStart,color:"#10b981",style:{width:"100%"}},"Iniciar Torneio 🎮")
+  );
+}
+
+// ── TournamentApp ─────────────────────────────────────────────────────────────
+function TournamentApp(p){
+  var ts=useState("jogos"),tab=ts[0],setTab=ts[1];
+  var ds=useState(p.tournament),data=ds[0],setData=ds[1];
+  var sv=useState(false),saving=sv[0],setSaving=sv[1];
+  var pdfRef=useRef();
+
+  useEffect(function(){return fbWatch(p.tournament.id,function(val){if(val)setData(val);});},[p.tournament.id]);
+
+  function save(nd){setSaving(true);fbSave(nd);setTimeout(function(){setSaving(false);},800);}
+
+  function setScore(key,ga,gb){
+    setData(function(prev){
+      var res=Object.assign({},prev.results);
+      res[key]={ga:ga===""?"":Number(ga),gb:gb===""?"":Number(gb)};
+      var nd=Object.assign({},prev,{results:res});save(nd);return nd;
+    });
+  }
+
+  function setBScore(phase,index,ga,gb){
+    setData(function(prev){
+      var nb=JSON.parse(JSON.stringify(prev.bracket));
+      nb[phase][index].score={ga:ga===""?"":Number(ga),gb:gb===""?"":Number(gb)};
+      var nd=Object.assign({},prev,{bracket:nb});save(nd);return nd;
+    });
+  }
+
+  var goleadas=useMemo(function(){
+    var list=[];
+    Object.entries(data.results||{}).forEach(function(e){
+      var key=e[0],score=e[1];
+      if(score.ga===""||score.gb===""||score.ga===undefined)return;
+      var parts=key.split("_vs_"),diff=Math.abs(Number(score.ga)-Number(score.gb));
+      if(diff>=3)list.push({p1:parts[0],p2:parts[1],ga:score.ga,gb:score.gb,diff:diff});
+    });
+    return list.sort(function(a,b){return b.diff-a.diff;}).slice(0,10);
+  },[data.results]);
+
+  function initBracket(){
+    var qualified=[];
+    if(data.type==='copa'){
+      Object.keys(data.groups).sort().forEach(function(g){
+        var s=getStats(data.groups[g].players,data.results);
+        if(s.length>=1)qualified.push(s[0][0]);
+        if(s.length>=2)qualified.push(s[1][0]);
+      });
+    } else {
+      getStats(data.players,data.results).slice(0,data.numClassificados).forEach(function(x){qualified.push(x[0]);});
+    }
+    var fq=qualified.slice(0,data.numClassificados);
+    if(fq.length<2)return alert("Jogadores insuficientes!");
+    var phase=fq.length>=16?'oitavas':fq.length>=8?'quartas':fq.length>=4?'semi':'final';
+    var matches=[];
+    for(var i=0;i<fq.length/2;i++)matches.push({p1:fq[i],p2:fq[fq.length-1-i],score:{ga:"",gb:""}});
+    var nd=Object.assign({},data,{bracket:{oitavas:phase==='oitavas'?matches:[],quartas:phase==='quartas'?matches:[],semi:phase==='semi'?matches:[],final:phase==='final'?matches:[]}});
+    setData(nd);save(nd);setTab("mata-mata");
+  }
+
+  function advance(phase,index){
+    var m=data.bracket[phase][index];
+    if(m.score.ga===""||m.score.gb===""||m.score.ga===undefined)return alert("Insira o placar!");
+    if(Number(m.score.ga)===Number(m.score.gb))return alert("Mata-mata não pode empatar!");
+    var winner=Number(m.score.ga)>Number(m.score.gb)?m.p1:m.p2;
+    setData(function(prev){
+      var nb=JSON.parse(JSON.stringify(prev.bracket)),champ=prev.champion;
+      if(phase==='oitavas'){if(!nb.quartas||!nb.quartas.length)nb.quartas=Array(4).fill(null).map(function(){return{p1:null,p2:null,score:{ga:"",gb:""}};});var ni=Math.floor(index/2);if(index%2===0)nb.quartas[ni].p1=winner;else nb.quartas[ni].p2=winner;}
+      else if(phase==='quartas'){if(!nb.semi||!nb.semi.length)nb.semi=Array(2).fill(null).map(function(){return{p1:null,p2:null,score:{ga:"",gb:""}};});var ni=Math.floor(index/2);if(index%2===0)nb.semi[ni].p1=winner;else nb.semi[ni].p2=winner;}
+      else if(phase==='semi'){if(!nb.final||!nb.final.length)nb.final=[{p1:null,p2:null,score:{ga:"",gb:""}}];if(index===0)nb.final[0].p1=winner;else nb.final[0].p2=winner;}
+      else{champ=winner;}
+      var nd=Object.assign({},prev,{bracket:nb,champion:champ});save(nd);return nd;
+    });
+  }
+
+  function shareWA(){
+    var text="*🏆 "+data.name.toUpperCase()+"*\n\n*📊 CLASSIFICAÇÃO ATUAL*\n";
+    getStats(data.players,data.results).forEach(function(x,i){text+=(i+1)+"º "+x[0]+" | "+x[1].pts+"pts ("+x[1].v+"V, "+x[1].sg+"SG)\n";});
+    if(data.champion)text+="\n*👑 CAMPEÃO: "+data.champion.toUpperCase()+"* 🏆";
+    window.open("https://api.whatsapp.com/send?text="+encodeURIComponent(text),'_blank');
+  }
+
+  function genPDF(){
+    var opt={margin:0,filename:"tabela_"+data.name+".pdf",image:{type:'jpeg',quality:0.98},html2canvas:{scale:2},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}};
+    html2pdf().set(opt).from(pdfRef.current).save();
+  }
+
+  var matchList=data.type==='copa'?Object.keys(data.groups||{}).sort():['LIGA'];
+
+  return h('div',{style:{paddingBottom:100}},
+    // Header
+    h('div',{style:{background:"#1e293b",padding:"12px 16px",borderBottom:"1px solid #334155",position:"sticky",top:0,zIndex:10}},
+      h('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",maxWidth:900,margin:"0 auto"}},
+        h(Btn,{outline:true,small:true,onClick:p.onBack},"← Sair"),
+        h('div',{style:{textAlign:"center"}},
+          h('div',{style:{fontWeight:900,fontSize:14}},data.name),
+          h('div',{style:{fontSize:10,color:saving?"#f59e0b":"#10b981"}},saving?"💾 Salvando...":"✅ Salvo · Todos veem em tempo real")
+        ),
+        h('div',{style:{display:"flex",gap:6}},
+          h(Btn,{small:true,color:"#8b5cf6",onClick:genPDF},"PDF 📄"),
+          h(Btn,{small:true,color:"#25D366",onClick:shareWA},"Zap 📲")
+        )
+      )
+    ),
+    h('div',{style:{maxWidth:900,margin:"0 auto",padding:"16px"}},
+      // Tabs
+      h('div',{style:{display:"flex",gap:6,marginBottom:20,overflowX:"auto"}},
+        h(Btn,{small:true,outline:tab!=='jogos',onClick:function(){setTab('jogos');}},"🎮 Jogos"),
+        h(Btn,{small:true,outline:tab!=='tabela',onClick:function(){setTab('tabela');}},"📊 Tabela"),
+        h(Btn,{small:true,outline:tab!=='mata-mata',onClick:function(){setTab('mata-mata');}},"⚔️ Mata-Mata"),
+        h(Btn,{small:true,outline:tab!=='goleadas',onClick:function(){setTab('goleadas');}},"💥 Goleadas")
+      ),
+
+      // Jogos
+      tab==='jogos'&&h('div',null,
+        h('div',{className:"card",style:{background:"#334155",border:"none"}},
+          h('p',{style:{margin:0,fontSize:12,fontWeight:700}},"🚀 MODO MULTI-CONSOLE: "+data.numConsoles+" APARELHO(S) · Todos veem em tempo real")
+        ),
+        matchList.map(function(g){
+          var mlist=g==='LIGA'?data.ligaMatches:data.groups[g].matches;
+          return h('div',{key:g,className:"card"},
+            h('h3',{style:{marginTop:0,fontSize:14,color:"#3b82f6"}},g==='LIGA'?'ORDEM DAS PARTIDAS':'GRUPO '+g),
+            mlist.map(function(m,idx){
+              var p1=m[0],p2=m[1],key=p1+"_vs_"+p2,score=data.results&&data.results[key]||{ga:"",gb:""};
+              var isCur=idx<data.numConsoles;
+              return h('div',{key:key,style:{display:"flex",alignItems:"center",gap:10,background:isCur?"rgba(59,130,246,0.1)":"#0f172a",padding:8,borderRadius:8,marginBottom:6,border:isCur?"1px solid #3b82f6":"1px solid transparent"}},
+                h('span',{className:"cbadge"},"C"+((idx%data.numConsoles)+1)),
+                h('div',{style:{flex:1,textAlign:"right",fontSize:13}},p1),
+                h('input',{type:"number",className:"iscore",value:score.ga,onChange:function(e){setScore(key,e.target.value,score.gb);}}),
+                h('span',null,"×"),
+                h('input',{type:"number",className:"iscore",value:score.gb,onChange:function(e){setScore(key,score.ga,e.target.value);}}),
+                h('div',{style:{flex:1,fontSize:13}},p2)
+              );
+            })
+          );
+        }),
+        !data.bracket&&h(Btn,{onClick:initBracket,color:"#8b5cf6",style:{width:"100%"}},"Iniciar Mata-Mata ⚔️")
+      ),
+
+      // Tabela
+      tab==='tabela'&&h('div',null,
+        matchList.map(function(g){
+          var pl=g==='LIGA'?data.players:data.groups[g].players;
+          return h('div',{key:g,className:"card"},
+            h('h3',{style:{marginTop:0,fontSize:14,color:"#3b82f6"}},g==='LIGA'?'CLASSIFICAÇÃO':'GRUPO '+g),
+            h('div',{style:{overflowX:"auto"}},
+              h('table',null,
+                h('thead',null,h('tr',null,['Pos','Jogador','J','PTS','V','E','D','GP','GC','SG'].map(function(c){return h('th',{key:c,align:c==='Jogador'?'left':'center'},c);}))),
+                h('tbody',null,
+                  getStats(pl,data.results).map(function(entry,i){
+                    var pp=entry[0],s=entry[1];
+                    return h('tr',{key:pp},
+                      h('td',null,h('span',{style:{width:22,height:22,display:"inline-flex",alignItems:"center",justifyContent:"center",borderRadius:"50%",fontSize:10,fontWeight:900,background:i<data.numClassificados?"#10b981":"#334155",color:"#fff",marginRight:6}},i+1)),
+                      h('td',null,h(Badge,{name:pp,color:data.colors&&data.colors[pp],small:true})),
+                      h('td',{align:"center"},s.j),h('td',{align:"center"},h('b',null,s.pts)),
+                      h('td',{align:"center"},s.v),h('td',{align:"center"},s.e),h('td',{align:"center"},s.d),
+                      h('td',{align:"center"},s.gp),h('td',{align:"center"},s.gc),h('td',{align:"center"},s.sg)
+                    );
+                  })
+                )
+              )
+            )
+          );
+        })
+      ),
+
+      // Mata-mata
+      tab==='mata-mata'&&h('div',null,
+        data.bracket&&['oitavas','quartas','semi','final'].map(function(phase){
+          if(!data.bracket[phase]||!data.bracket[phase].length)return null;
+          return h('div',{key:phase,style:{marginBottom:24}},
+            h('h3',{style:{textAlign:"center",textTransform:"uppercase",fontSize:12,color:"#3b82f6"}},phase),
+            data.bracket[phase].map(function(m,i){
+              return h('div',{key:i,className:"card",style:{display:"flex",alignItems:"center",gap:10}},
+                h('span',{className:"cbadge"},"C"+((i%data.numConsoles)+1)),
+                h('div',{style:{flex:1,textAlign:"right"}},m.p1?h(Badge,{name:m.p1,color:data.colors&&data.colors[m.p1]}):"?"),
+                h('input',{type:"number",className:"iscore",value:m.score.ga,onChange:function(e){setBScore(phase,i,e.target.value,m.score.gb);}}),
+                h('span',null,"×"),
+                h('input',{type:"number",className:"iscore",value:m.score.gb,onChange:function(e){setBScore(phase,i,m.score.ga,e.target.value);}}),
+                h('div',{style:{flex:1}},m.p2?h(Badge,{name:m.p2,color:data.colors&&data.colors[m.p2]}):"?"),
+                h(Btn,{small:true,onClick:function(){advance(phase,i);}},"✓")
+              );
+            })
+          );
+        }),
+        data.champion&&h('div',{style:{textAlign:"center",padding:40,border:"3px solid #fbbf24",borderRadius:16,background:"rgba(251,191,36,0.05)"}},
+          h('div',{style:{fontSize:60}},"🏆"),
+          h('h2',{style:{color:"#fbbf24",fontSize:32}},data.champion),
+          h('p',{style:{color:"#94a3b8"}},"GRANDE CAMPEÃO")
+        ),
+        !data.bracket&&h('p',{style:{textAlign:"center",color:"#64748b"}},"Conclua a fase de grupos primeiro.")
+      ),
+
+      // Goleadas
+      tab==='goleadas'&&h('div',{className:"card"},
+        h('h3',{style:{marginTop:0}},"💥 Maiores Goleadas (diferença ≥ 3)"),
+        goleadas.length===0
+          ?h('p',{style:{textAlign:"center",color:"#64748b"}},"Nenhuma goleada ainda.")
+          :goleadas.map(function(g,i){
+            return h('div',{key:i,style:{display:"flex",justifyContent:"space-between",padding:12,background:"#0f172a",borderRadius:8,marginBottom:8}},
+              h('div',{style:{display:"flex",gap:8,alignItems:"center"}},
+                h(Badge,{name:g.p1,color:data.colors&&data.colors[g.p1],small:true}),
+                h('span',{style:{fontWeight:900}},g.ga+" × "+g.gb),
+                h(Badge,{name:g.p2,color:data.colors&&data.colors[g.p2],small:true})
+              ),
+              h('div',{style:{color:"#10b981",fontWeight:900}},"+"+g.diff)
+            );
+          })
+      )
+    ),
+
+    // PDF hidden
+    h('div',{style:{position:"absolute",left:"-9999px"}},
+      h('div',{ref:pdfRef,style:{background:"#0f172a",padding:40,color:"white",width:1000}},
+        h('h1',{style:{textAlign:"center",fontSize:32}},"TABELA DE CLASSIFICAÇÃO - "+data.name),
+        h('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:16,marginTop:20}},
+          h('thead',null,h('tr',null,['POS','JOGADOR','J','PTS','V','E','D','GP','GC','SG'].map(function(c){return h('th',{key:c,style:{background:"#1e293b",color:"#3b82f6",padding:15,border:"1px solid #334155"}},c);}))),
+          h('tbody',null,
+            getStats(data.players,data.results).map(function(x,i){
+              var pp=x[0],s=x[1];
+              return h('tr',{key:pp},
+                h('td',{style:{padding:15,border:"1px solid #334155",textAlign:"center"}},(i+1)+"º"),
+                h('td',{style:{padding:15,border:"1px solid #334155"}},pp),
+                [s.j,s.pts,s.v,s.e,s.d,s.gp,s.gc,s.sg].map(function(v,vi){return h('td',{key:vi,style:{padding:15,border:"1px solid #334155",textAlign:"center"}},v);})
+              );
+            })
+          )
+        )
+      )
+    )
+  );
+}
+
+// ── Root ──────────────────────────────────────────────────────────────────────
+function Root(){
+  var ss=useState("home"),screen=ss[0],setScreen=ss[1];
+  var as=useState(null),active=as[0],setActive=as[1];
+  if(screen==="home") return h(HomeScreen,{onNew:function(){setScreen("setup");},onLoad:function(t){setActive(t);setScreen("tournament");}});
+  if(screen==="setup") return h(SetupScreen,{onBack:function(){setScreen("home");},onStart:function(t){setActive(t);setScreen("tournament");}});
+  if(screen==="tournament") return h(TournamentApp,{tournament:active,onBack:function(){setScreen("home");}});
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(Root,null));
+</script>
+</body>
+</html>
