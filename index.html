@@ -9,10 +9,10 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-  <script>
-    const firebaseConfig = {
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script type="text/javascript">
+    var firebaseConfig = {
       apiKey: "AIzaSyDtf8IBG9P-Ai2MBxUom2tNRg6eoDI5h5c",
       authDomain: "campeonato-eafc.firebaseapp.com",
       databaseURL: "https://campeonato-eafc-default-rtdb.firebaseio.com",
@@ -22,7 +22,7 @@
       appId: "1:636657002055:web:1bf2729ad7895cdf29f362"
     };
     firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+    var db = firebase.database();
   </script>
   <style>
     body { margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
